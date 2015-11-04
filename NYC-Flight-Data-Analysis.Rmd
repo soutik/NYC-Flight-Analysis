@@ -1,0 +1,402 @@
+---
+title: "NYC Flight Data Analysis"
+author: "Soutik Chakraborty"
+date: "Monday, November 3, 2015"
+output: html_document
+---
+
+
+```{r Setup, message=FALSE}
+# Stardard libraries
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(nycflights13)
+
+#installing package to help plot corrgrams (to find correlations)
+#install.packages('corrgram') 
+library(corrgram)
+library(corrplot)
+
+#Using Hmisc library to find correlated variables
+library(Hmisc)
+
+#Using Maps pakacge for plotting in later questions
+library(maps)
+```
+
+\rule{\textwidth}{1pt}
+
+\
+
+
+### Exploring the NYC Flights Data ####
+
+
+In this problem set we will use the data on all flights that departed NYC (i.e. JFK, LGA or EWR) in 2013. You can find this data as part of the `nycflights13` R package. Data includes not only information about flights, but also data about planes, airports, weather, and airlines.  
+
+\
+
+
+#### (a) Flights are often delayed. Performing an exploratory data analysis to address each of the following questions:
+
+####- What was the worst day to fly out of NYC in 2013 if you dislike delayed flights?
+
+
+The data provided is the flights data for all airplanes that departed NYC (JFK, LGA and EWR) airport in 2013. In the data we see there are 2 variables that relate to the delay that we need to consider for finding the worst day to fly if we hate delays:
+
+1. **arr_delay**: This is the arrival delay of the flight for that particular trip
+
+2. **dep_delay**: This is the departure delay of the flight for that particular trip.
+
+In both the above variables, the positive values are delayed flights while negative values are actually flights that arrived or departed early
+ 
+The total delay of a day can be considered to be a sum of both POSITIVE delays (for all flights) mentioned:
+
+             Total Delay = Avg. Arrival Delay + Avg. Departure Delay
+             
+**NOTE** We will ONLY consider the positive delays as they are the actual delays while the negative values are actually early arrivals or departures, which although are inconvinient for passengers aren't exactly "delays" in the true meaning of the word. They can be considered if we were to find the most inconvinient days
+
+We first find the overall worst day to fly from NYC (all 3 airports).
+
+```{r}
+#loading the flights data
+flights %>%  
+  #Selecting only the columns required-Month, Day, average Departure delay
+  #and average arrival delay
+  select(month, day, arr_delay, dep_delay) %>% 
+  
+  #We will just focus on positive delays. This means that we DON'T consider
+  #early arrivals and departures as 'Delays' as it is intuitively incorrect.
+  filter(arr_delay >= 0, dep_delay >= 0) %>%
+  
+  #Grouping by Month & Day as we want other operations to find the mean delay
+  #for each day of the  month in the year 2013.
+  group_by(month, day) %>%
+  
+  #Now we summarize the entire delay into a single column (avg_delay) by adding 
+  #up the mean of the departure & arrival delays for each day of the month. We 
+  #should have ideally 365 rows after this operation
+  summarise(avg_delay =  mean(arr_delay, na.rm = TRUE) + 
+              mean(dep_delay, na.rm = TRUE)) %>%
+  
+  #We now ungroup the grouped data set as we want to now calculate the highest 
+  #delay amongst all the 365 days rather than just in a particular month
+  ungroup() %>%
+  
+  #Now we arrange the delays in descending order to get the highest delay in the  
+  #first row of our data set.
+  arrange(-avg_delay) %>%
+  
+  #Selecting the first row of the data set. Which shows the highest delay and the 
+  #month and day corresponding to it.
+  head(1)
+```
+
+This tells us that the worst day to fly in 2013 (across all 3 airports ) would've been the `12th September, 2013` where the average delay was `228 mins` i.e `approx 3 hrs 50 mins`.
+
+Once we have found the day to avoid in 2013 for the highest delay we can now address the following question.
+
+**Is there some particular airport with the highest delay in the 365 operation that needs to be avaoided?**
+
+To answer this we would like to find the worst days to fly and the corresponding airport from where the flight shouldn't be taken to avaoid the delays. We try to find the top 3 days and originating airports to avoid in 2013. The code to find is below:
+
+```{r}
+#loading the flights data and saving the work in 'data' object for future use
+data <- flights %>%  
+  #Selecting only the columns required-Month, Day, average Departure delay
+  #origin and average arrival delay
+  select(origin, month, day ,arr_delay, dep_delay) %>% 
+  
+  #We will just focus on positive delays. This means that we DON'T consider
+  #early arrivals and departures as 'Delays' as it is intuitively incorrect.
+  filter(arr_delay >= 0, dep_delay >= 0) %>%
+  
+  #Grouping by Origin, Month & Day as we want other operations to find the mean delay
+  #for each day of the  month in the year 2013 for each airport in NYC.
+  group_by(origin, month, day) %>%
+  
+  #Now we summarize the entire delay into a single column (avg_delay) by adding 
+  #up the mean of the departure & arrival delays for each day of the month in each   
+  #origin airport. We should have ideally 1095 rows after this operation
+  summarise(avg_delay =  mean(arr_delay, na.rm = TRUE) + 
+              mean(dep_delay, na.rm = TRUE)) %>%
+  
+  #We now ungroup the grouped data set as we want to now calculate the highest 
+  #delay amongst all the 365 days rather than just in a particular month
+  ungroup() %>%
+  
+  #Now we arrange the delays in descending order to get the highest delay at the
+  #top of the data frame
+  arrange(-avg_delay)
+  
+#Selecting the first 3 of the data set. Which shows the highest delay and the 
+#origin, month and day corresponding to it.
+head(data, 3)
+```
+
+This tells us that we should avoid `LGA` on `2nd September, 2013` and on `12th September, 2013` alongwith `EWR` on `12th Septermber, 2013` if we want to avoid the highest delays in flight arrival and departures.
+
+
+\
+
+
+####- Are there any seasonal patterns in departure delays for flights from NYC?
+
+
+To get a seasonal pattern in delays we will need to plot across the year and day of 2013. For this we will create a `date` variable in our `data` object we created above. This will allow us to plot `date` v/s `average delay`.
+
+We first plot a scatter plot to examine if there are any visible characteristics. The code and graph is given below.
+
+```{r, message=FALSE}
+#Creating the 'date' variable by passing the entire data object inside a 'with'
+#function. The 'ISOdate' function merges the 'month' & 'day' column along with
+#year = 2013 to make a complete date column. We save this entire column in the 
+#'data' object.
+data$date <- with(data, ISOdate(year = 2013, month, day))
+
+#Creating a ggplot function with x-axis = Date and y-axis = Average delay
+g <- ggplot(data, aes(x = data$date, y = data$avg_delay, title = "Seasonality Trends"))
+
+#Adding points layer to create a scatter plot to check if some visual cues exist
+#colored the points based on the origin of the flight (shown in legend)
+g + geom_point(aes(color = data$origin)) + xlab("Date") + ylab("Average Delay (mins)")
+```
+
+We realise that by just plotting the points we really can't figure out any trends. So we now try to fit a smoother across the data to figure out the trend (if any) this data shows.
+
+```{r, message=FALSE}
+#Adding a layer of smoother to the already existing plot using geom_smooth
+g + geom_point(aes(color = data$origin)) + xlab("Date") + 
+  ylab("Average Delay (mins)") + geom_smooth(color = "Black")
+
+```
+
+Ah! We now see some trend. We try to zoom in on the line only this time to see the trend.
+
+```{r, message = FALSE}
+#Plotting just the smoother and removing the scatter plot layer to zoom into the
+#line trend.
+g + xlab("Date") + ylab("Average Delay (mins)") + geom_smooth(color = "Blue") 
+```
+
+This shows us that there is a PEAK in delays during June, July & August month and the delays generally fall down during the winter months i.e. October, November, December & January
+
+The rationale that I could come up after reading articles as to why there are such high delays during summer <http://fortune.com/2015/05/28/worst-airports-delays-summer/> states that the following might be the reasons for the same:
+
+* Repair work due after a hectic winter season
+
+* A lot of passenger traffic to Europe for summer vaccation and NYC airports act as hub for most airlines.
+
+Hence the reason might be season? Maybe.
+
+
+
+\
+
+
+####- On average, how do departure delays vary over the course of a day?
+
+
+To find average delay in arrival/departure in  a course of a day we will need to have a plot the average delays per hour in all days across 2013. This will give us an hourly trend (if any) in the data.
+
+We will first need to figure out a way to find the `hour` of the day the flight departed/arrived the airport. For this we will use the following code:
+
+```{r, message = FALSE}
+arr_delay_data <- flights %>%
+  select(arr_delay, dep_delay, hour)  
+
+#Making sure that 24:00 hrs is 00:00 hrs. Replacing all instances of 2400 hrs 
+#as 0000hrs. This will help us in making sure we have only 24 hours
+#when we round off the hours to the nearest hour interval
+arr_delay_data$hour <- ifelse(arr_delay_data$hour == 2400, 0, 
+                                  arr_delay_data$hour)
+
+#We now will use the same strategy mentioned in the above code chunk
+#to get a summarized dataset with average arrival delay for each hour.
+arr_delay <- arr_delay_data %>%
+  select(hour, arr_delay, dep_delay) %>%
+  group_by(hour) %>%
+  summarise(avg_delay = mean(arr_delay, na.rm = TRUE) +
+              mean(dep_delay, na.rm = TRUE)) %>%
+  na.omit()
+
+#To understand the trend in an hourly fashione we plot the points and a
+#smoother for bringing out the trend.
+g <- ggplot(arr_delay, aes(x = as.numeric(hour), y = avg_delay, 
+            title = "Delay - hourly"))
+g + geom_point(color = "Black") + geom_smooth() + ylab("Average Delay (mins)") +
+  xlab("Hour")
+
+```
+
+As we can see that the trend of arrival and departure delay is the same when averaged for an hour in the year 2013. This shows that there is significant delay for flights which depart/arrive early morning from `00:00 hrs to 08:00 hrs`. 
+
+This trend can be seen from the data that is been provided.
+
+
+#### (b) Flight delays are often linked to weather conditions. How does weather impact flights from NYC? 
+
+
+We start fresh with new data sets for each `flights` and `weather`. We store them in local data frames so that further modifications can be easily done on them.
+
+```{r, message = FALSE}
+#saving flights & weather data in local data frames
+flights <- flights
+weather <- weather
+```
+
+Now on inspection we will find that the `weather` data has some common columns based on which we can merge the two data sets - origin, year, month, day. We do need to make sure that our `flights` dataset has `hours` column. This is easy to create by following the steps mentioned in the earlier code chunks.
+
+```{r, message = FALSE}
+#creating 'hours' column and making sure that hours are only from
+#00:00 hrs to 23:00 hrs which is exactly as the 'weather' data set has.
+#this will help us join the 2 data sets properly.
+flights$hour <- ifelse(flights$hour == 24, 0, flights$hour)
+
+#JOining the 'flights' and 'weather' datasets based on unique identifiers.
+flights_weather <- left_join(flights, weather)
+
+#We create a 'delays' column that is addition of all the delays in
+#arrival and departure (Consider only positive delays. Reason stated in
+#1st problem solution)
+flights_weather$arr_delay <- ifelse(flights_weather$arr_delay >= 0,
+                                    flights_weather$arr_delay, 0)
+flights_weather$dep_delay <- ifelse(flights_weather$dep_delay >= 0,
+                                    flights_weather$dep_delay, 0)
+flights_weather$total_delay <- flights_weather$arr_delay + flights_weather$dep_delay
+
+ 
+#creating a data with only delay and weather columns. Removing origin, date/time
+#because we want a correlation between delay and the particular weather condition.
+cor_data <- select(flights_weather, total_delay, temp, dewp, humid,
+                   wind_dir, wind_speed, wind_gust, precip, pressure, visib)
+
+#WE first plot a correlation Matrix using corrplot to find the variables that
+#are correlated. We create a correlation matrix using 'cor' function
+corrplot(cor(na.omit(cor_data)), method = "circle", type = "upper",
+         tl.srt = 25, tl.col = "Black", tl.cex = 1, title = "Correlation
+         between all 'weather' variables & 'delay'", mar =c(0, 0, 4, 0) + 0.1)
+
+#We test our hypothesis that all the factors affect the delay.
+#This can be tested by getting a very low p-value
+summary(glm(total_delay ~., data = cor_data, family = 'gaussian'))
+```
+
+The above co-eff matrix shows that all the weather variable are invovled for the delay caused. This is because the `p-value is < 0.05`. We can see a few plots that would show this trend where we can predict the delay based out of one of the weather vairable.
+
+The following code chunk produces plots of `total_delay` v/s each of the `weather` data variables
+
+
+```{r, message = FALSE, warning=FALSE}
+#PLotting a smoother for Total Delay v/s Relative Humidity.
+g <- ggplot(cor_data, aes(y = humid, x = total_delay, 
+                          title = "Total Delay v/s Relative Humidity"))
+g + geom_smooth() + ylab("Relative Humidity") + 
+  xlab("Total Delay (mins)")
+
+```
+
+This shows that the `total_delay` increases with `humidity`. This is in tune with the weather condition and seasonality trends that we saw before at NYC. During summer there is a higher humidity resulting in the occassional rains and that is during the time that there is a higher delay during that time.
+
+```{r, message = FALSE, warning=FALSE}
+#Plotting a smoother for Total Delay v/s Temperature
+g <- ggplot(cor_data, aes(y = temp, x = total_delay, 
+                          title = "Total Delay v/s Temperature"))
+g + geom_smooth() + ylab("Temperature") + 
+  xlab("Total Delay (mins)")
+```
+
+The temperature plot also shows that with a higher temperature (i.e in summer) there is a higher delay. The smoother tail falls down cause of extreme outliers which are days that saw extreme delay due to maybe reasons outside the purview of the data set variables.
+
+We can plot all these variables against delay and we will see a trend that during summer the delays have been more. 
+
+\
+
+
+#### (c) Flight performance may also be impacted by the aircraft used. Do aircrafts with certain characteristics (e.g. manufacturer) demonstrate better performance?
+
+
+We again merge the `flights` and `planes` datasets to get a comprehensive dataset that allows us to perform some analysis which will tell us if there variables that affect "Flight Performance"
+
+We define "Flight Perfomance" as a NEW variable that can be calculated as below
+        
+        Flight Perfomance = (Arival Delay + Departure Delay)/Air Time
+
+**Lower PI is BETTER**
+
+We will also want to create a new variable that will show the number of years the plane has been used or the AGE of the plane since it was manufacture. This can be calculated using the following formula
+                  
+                  Age of plane = 2013(Flight year) - Year Manufactured
+                  
+We will do the above operations in the following code chunk
+
+```{r, message = FALSE}
+#Merging the datasets 'flights' and 'planes' based on a unique idetifiers.
+flight_planes <- left_join(flights, planes, by = 'tailnum')
+
+#Changing year.x to the year of the flight
+names(flight_planes)[1] = "year"
+
+#Changing year.y to "year of manufacture"
+names(flight_planes)[17] = "year_manufacture" 
+
+#Calulcating the Performance Index [pi] 
+flight_planes$pi <- (flight_planes$dep_delay + flight_planes$arr_delay)/
+  flight_planes$air_time
+  
+
+#We also calculate the 'age' of the aircraft as a variable
+flight_planes$age <- flight_planes$year - flight_planes$year_manufacture
+```
+
+As we try to find the correlation between each of the plane data and the 'performance index' we will again plot a correlation matrix of all the variables from the merged data we created to get a fair understanding of the variables that are affecting the performance of the plane. 
+
+```{r, message = FALSE}
+#We group all the performance parameters for each aircraft using their tailnum
+#This will give us an average performance index of that aircraft for the year 2013
+aircraft <- flight_planes %>%
+  
+  #we group by the tailnum
+  group_by(tailnum) %>%
+  
+  #we find the mean of the Performance index
+  summarise(avg_pi = mean(pi, na.rm = TRUE)) 
+
+#we will now add the planes dataset to our aggregated aircraft data
+air_details <- left_join(aircraft, planes)
+air_details$age <- 2013 - air_details$year
+
+#plotting to find any correlation
+d <- air_details %>%
+  select(seats, avg_pi) %>%
+  group_by(seats) %>%
+  summarise(pi = mean(avg_pi, na.rm = TRUE))
+
+g <- ggplot(d, aes(x = seats, y = pi, title = "PI v/s seats")) 
+g + geom_point() + geom_smooth(method = 'lm') + xlab("Seats") +
+  ylab("Performance Index (Lower is better)")
+  
+```
+
+This shows a decreasing trend in performance as seats increase. Which should be true as there will be more boarding and allighting times involved.
+
+Let us check if a particular manufacturer has a high performance.
+
+```{r, message = FALSE}
+#FInding the average Perfomance Index for each manufacturer
+#This is done using the same method as done in the earlier plot
+d <- air_details %>%
+  select(manufacturer, avg_pi) %>%
+  group_by(manufacturer) %>%
+  summarise(pi = mean(avg_pi, na.rm = TRUE)) %>%
+  na.omit()
+
+ggplot(d, aes(x = factor(manufacturer) , y = pi, title = "PI v/s Manufacturers")) + 
+  geom_bar(stat = "identity") + xlab("Perfomance Index (Lower is better)") +
+  ylab("Manufacturers") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+This shows that few manufacturers have really low PI (Which is great!). This might be a topic to explore further with age of the aircraft and the technology used to figure out why some aircrafts perform better.
+
